@@ -95,15 +95,20 @@ class DiscordNotifier:
         if nvd and nvd.primary_description:
             description = nvd.primary_description
 
-        # Truncate description to Discord's 4096 character limit
-        if len(description) > 2000:
-            description = description[:1997] + "..."
+        # Truncate description - be very conservative to stay under 6000 char total embed limit
+        # Each embed with all fields can be ~400-500 chars, keep description minimal
+        if len(description) > 400:
+            description = description[:397] + "..."
 
-        # Build fields
+        # Build fields (Discord limit: 25 fields, 1024 chars per value)
+        product_value = f"{kev.vendor_project} - {kev.product}"
+        if len(product_value) > 1024:
+            product_value = product_value[:1021] + "..."
+
         fields: list[dict[str, Any]] = [
             {
                 "name": "📦 Product",
-                "value": f"{kev.vendor_project} - {kev.product}",
+                "value": product_value,
                 "inline": True,
             },
             {
@@ -133,11 +138,15 @@ class DiscordNotifier:
                 }
             )
 
-        # Add required action
+        # Add required action (truncate to Discord's 1024 char limit)
+        required_action = kev.required_action
+        if len(required_action) > 1024:
+            required_action = required_action[:1021] + "..."
+
         fields.append(
             {
                 "name": "✅ Required Action",
-                "value": kev.required_action,
+                "value": required_action,
                 "inline": False,
             }
         )
@@ -243,6 +252,14 @@ class DiscordNotifier:
 
             except requests.RequestException as e:
                 logger.error(f"Failed to send Discord notification: {e}")
+                # Log the response body for debugging
+                if hasattr(e, 'response') and e.response is not None:
+                    try:
+                        error_detail = e.response.json()
+                        logger.error(f"Discord API error details: {error_detail}")
+                    except Exception:
+                        logger.error(f"Discord API response: {e.response.text[:500]}")
+
                 # For the first batch, raise error
                 if i == 0:
                     raise DiscordWebhookError(f"Failed to send Discord notification: {e}") from e

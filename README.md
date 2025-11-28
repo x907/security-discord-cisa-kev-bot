@@ -7,10 +7,12 @@ A professional Python bot that monitors the [CISA Known Exploited Vulnerabilitie
 - **Automated Monitoring**: Runs on GitHub Actions hourly to check for new KEV entries
 - **Rich Notifications**: Beautifully formatted Discord embeds with comprehensive vulnerability information
 - **NVD Enrichment**: Enhances KEV data with CVSS scores, CWE classifications, and detailed descriptions
+- **Deduplication**: Automatically tracks posted CVEs and prevents duplicate notifications
 - **Security-First Design**: Built with input validation, proper error handling, and secure configuration management
 - **Smart Rate Limiting**: Respects NVD API rate limits with exponential backoff retry logic
 - **Resilient**: Automatic retry with exponential backoff for transient failures (429, 500, 502, 503, 504)
 - **Ransomware Alerts**: Special highlighting for vulnerabilities used in ransomware campaigns
+- **Flexible Time Windows**: Check any time range (24 hours default, configurable via CLI or env var)
 
 ## Quick Start
 
@@ -46,7 +48,11 @@ python -m src.main --test
 
 5. Run the monitor:
 ```bash
+# Check last 24 hours (default)
 python -m src.main
+
+# Or check last 7 days for initial run
+python -m src.main --days 7
 ```
 
 ## Configuration
@@ -153,9 +159,26 @@ python -m src.main --verbose
 # Test Discord webhook
 python -m src.main --test
 
-# Check custom time window
+# Check last 7 days (useful for initial setup)
+python -m src.main --days 7
+
+# Check last 30 days and bypass deduplication
+python -m src.main --days 30 --force
+
+# Check custom time window via environment variable
 KEV_CHECK_HOURS=48 python -m src.main
 ```
+
+## Deduplication
+
+The bot automatically tracks which CVEs have been posted to prevent duplicates:
+
+- **State Management**: Stores posted CVE IDs in `state/posted_cves.json`
+- **Automatic Filtering**: Skips CVEs that were already posted
+- **State Cleanup**: Automatically removes entries older than 90 days to prevent unbounded growth
+- **Force Mode**: Use `--force` flag to bypass deduplication when needed
+
+The state file is excluded from git (in `.gitignore`) and persists across runs.
 
 ## Security Considerations
 
@@ -165,6 +188,7 @@ KEV_CHECK_HOURS=48 python -m src.main
 - **Error Handling**: Graceful degradation if NVD enrichment fails
 - **Secure Defaults**: Conservative timeout and rate limit settings
 - **Type Safety**: Full type hints with mypy strict checking
+- **Atomic State Updates**: State file updates use atomic write operations
 
 ## Discord Message Format
 

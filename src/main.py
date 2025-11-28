@@ -10,6 +10,7 @@ from .discord_notifier import DiscordNotifier, DiscordNotifierError
 from .kev_monitor import KEVMonitor, KEVMonitorError
 from .models import EnrichedKEV
 from .nvd_enricher import NVDEnricher
+from .state_manager import StateManager
 
 # Configure logging
 logging.basicConfig(
@@ -74,17 +75,20 @@ def enrich_kev_entries(
     return enriched
 
 
-def run_monitor(settings: Settings) -> int:
+def run_monitor(settings: Settings, force: bool = False) -> int:
     """Run the KEV monitoring and notification workflow.
 
     Args:
         settings: Application settings
+        force: If True, bypass deduplication and post all found CVEs
 
     Returns:
         Exit code (0 for success, 1 for error)
     """
     try:
         # Initialize components
+        state_manager = StateManager()
+
         with (
             KEVMonitor(settings) as kev_monitor,
             NVDEnricher(settings) as nvd_enricher,
@@ -98,15 +102,44 @@ def run_monitor(settings: Settings) -> int:
                 logger.info("No new vulnerabilities found in the specified time window")
                 return 0
 
-            logger.info(f"Found {len(recent_kevs)} new vulnerabilities")
+            logger.info(f"Found {len(recent_kevs)} vulnerabilities in time window")
+
+            # Filter out already-posted CVEs (unless --force is used)
+            if force:
+                logger.info("Force mode enabled - bypassing deduplication")
+                new_kevs = recent_kevs
+            else:
+                new_kevs = [kev for kev in recent_kevs if not state_manager.is_posted(kev.cve_id)]
+                duplicate_count = len(recent_kevs) - len(new_kevs)
+
+                if duplicate_count > 0:
+                    logger.info(
+                        f"Filtered out {duplicate_count} already-posted CVEs "
+                        f"({len(new_kevs)} new, {duplicate_count} duplicates)"
+                    )
+
+            if not new_kevs:
+                logger.info("No new vulnerabilities to post (all were previously posted)")
+                return 0
+
+            logger.info(f"Processing {len(new_kevs)} new vulnerabilities")
 
             # Enrich with NVD data
-            enriched_kevs = enrich_kev_entries(recent_kevs, nvd_enricher)
+            enriched_kevs = enrich_kev_entries(new_kevs, nvd_enricher)
 
             # Send notifications
             discord_notifier.send_notifications(enriched_kevs)
 
-            logger.info("Successfully completed KEV monitoring workflow")
+            # Mark as posted
+            state_manager.mark_batch_as_posted(new_kevs)
+
+            # Cleanup old state entries (keep last 90 days)
+            state_manager.cleanup_old_entries(days=90)
+
+            logger.info(
+                f"Successfully completed KEV monitoring workflow - "
+                f"posted {len(new_kevs)} vulnerabilities"
+            )
             return 0
 
     except KEVMonitorError as e:
@@ -153,14 +186,17 @@ Examples:
   # Run the monitor (check last 24 hours)
   python -m src.main
 
+  # Check last 7 days (useful for initial run)
+  python -m src.main --days 7
+
   # Test Discord webhook
   python -m src.main --test
 
   # Enable debug logging
   python -m src.main --verbose
 
-  # Check custom time window (set KEV_CHECK_HOURS env var)
-  KEV_CHECK_HOURS=48 python -m src.main
+  # Force repost all CVEs (bypass deduplication)
+  python -m src.main --days 7 --force
         """,
     )
 
@@ -177,6 +213,19 @@ Examples:
         help="Enable debug logging",
     )
 
+    parser.add_argument(
+        "--days",
+        type=int,
+        metavar="N",
+        help="Check for vulnerabilities added in the last N days (overrides KEV_CHECK_HOURS)",
+    )
+
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Force posting all found CVEs, bypassing deduplication",
+    )
+
     args = parser.parse_args()
 
     # Setup logging
@@ -185,6 +234,12 @@ Examples:
     # Load settings
     try:
         settings = get_settings()
+
+        # Override KEV_CHECK_HOURS if --days is specified
+        if args.days:
+            settings.kev_check_hours = args.days * 24
+            logger.info(f"Overriding check window to {args.days} days ({settings.kev_check_hours} hours)")
+
         logger.info("Configuration loaded successfully")
     except Exception as e:
         logger.error(f"Failed to load configuration: {e}")
@@ -195,7 +250,7 @@ Examples:
     if args.test:
         exit_code = run_test(settings)
     else:
-        exit_code = run_monitor(settings)
+        exit_code = run_monitor(settings, force=args.force)
 
     sys.exit(exit_code)
 

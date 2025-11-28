@@ -14,13 +14,19 @@ This is a professional Python security monitoring bot that tracks the CISA Known
 # Standard run (checks last 24 hours)
 python -m src.main
 
+# Check last 7 days (useful for initial run or testing)
+python -m src.main --days 7
+
+# Force posting all found CVEs (bypass deduplication)
+python -m src.main --days 7 --force
+
 # Test Discord webhook
 python -m src.main --test
 
 # Debug mode with verbose logging
 python -m src.main --verbose
 
-# Custom time window
+# Custom time window via environment variable
 KEV_CHECK_HOURS=48 python -m src.main
 ```
 
@@ -101,19 +107,30 @@ The application follows a modular, security-first architecture with clear separa
    - Batches up to 10 embeds per message (Discord limit)
    - Special highlighting for ransomware-related CVEs
 
-6. **src/main.py**: Orchestration and entry point
+6. **src/state_manager.py**: State management for deduplication
+   - Tracks posted CVEs in `state/posted_cves.json`
+   - Prevents duplicate notifications
+   - Automatic cleanup of old entries (90 days)
+   - Atomic file writes for data integrity
+
+7. **src/main.py**: Orchestration and entry point
    - Context managers ensure proper resource cleanup
    - Structured logging with configurable verbosity
-   - CLI argument parsing for test mode and debugging
+   - CLI argument parsing for --test, --days, --force, --verbose
+   - Deduplication logic to filter already-posted CVEs
 
 ### Data Flow
 
 ```
 KEVMonitor → fetch KEV JSON → filter by date → KEV entries
     ↓
+StateManager → check for duplicates → filter new CVEs
+    ↓
 NVDEnricher → enrich each CVE → rate-limited API calls → Enriched KEVs
     ↓
 DiscordNotifier → format embeds → batch messages → post to Discord
+    ↓
+StateManager → mark as posted → update state file
 ```
 
 ### Security Architecture
@@ -127,6 +144,8 @@ The codebase is designed with "left-to-right thinking" security principles:
 5. **Resource Management**: Context managers for HTTP sessions
 6. **No Secret Leakage**: Secrets only in environment variables, never logged
 7. **Minimal Permissions**: GitHub Actions uses `permissions: contents: read`
+8. **Deduplication**: State tracking prevents duplicate posts
+9. **Atomic Writes**: State file updates use temp file + rename for atomicity
 
 ### Configuration Validation
 

@@ -28,7 +28,7 @@ class Settings(BaseSettings):
 
     # KEV Configuration
     kev_url: str = Field(
-        default="https://raw.githubusercontent.com/cisagov/KEV/develop/known_exploited_vulnerabilities.json",
+        default="https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json",
         description="URL to CISA KEV JSON data",
     )
 
@@ -53,10 +53,10 @@ class Settings(BaseSettings):
 
     # Discord Formatting
     max_discord_embeds_per_message: int = Field(
-        default=10,
+        default=5,
         ge=1,
         le=10,
-        description="Maximum embeds per Discord message (Discord limit is 10)",
+        description="Maximum embeds per Discord message (Discord limit is 10, but lower is safer)",
     )
 
     # Timeout Configuration
