@@ -8,7 +8,8 @@ A professional Python bot that monitors the [CISA Known Exploited Vulnerabilitie
 - **Rich Notifications**: Beautifully formatted Discord embeds with comprehensive vulnerability information
 - **NVD Enrichment**: Enhances KEV data with CVSS scores, CWE classifications, and detailed descriptions
 - **Security-First Design**: Built with input validation, proper error handling, and secure configuration management
-- **Rate Limiting**: Respects NVD API rate limits with configurable delays
+- **Smart Rate Limiting**: Respects NVD API rate limits with exponential backoff retry logic
+- **Resilient**: Automatic retry with exponential backoff for transient failures (429, 500, 502, 503, 504)
 - **Ransomware Alerts**: Special highlighting for vulnerabilities used in ransomware campaigns
 
 ## Quick Start
@@ -17,7 +18,7 @@ A professional Python bot that monitors the [CISA Known Exploited Vulnerabilitie
 
 - Python 3.11+
 - Discord webhook URL
-- (Optional) NVD API key for higher rate limits
+- **Strongly Recommended:** Free NVD API key for 10x faster rate limits
 
 ### Installation
 
@@ -54,10 +55,12 @@ python -m src.main
 
 - `DISCORD_WEBHOOK_URL`: Your Discord webhook URL (required)
 
-### Optional Environment Variables
+### Strongly Recommended Environment Variables
 
-- `NVD_API_KEY`: NVD API key for higher rate limits (recommended)
-  - Get one at: https://nvd.nist.gov/developers/request-an-api-key
+- `NVD_API_KEY`: **Free** NVD API key for 10x faster rate limits (5 req/30s → 50 req/30s)
+  - **Get your free API key at:** https://nvd.nist.gov/developers/request-an-api-key
+  - Without a key, the bot will be significantly slower and may timeout on large batches
+  - Registration is free and instant
 - `KEV_CHECK_HOURS`: Hours to look back for new vulnerabilities (default: 24)
 - `NVD_REQUEST_DELAY_SECONDS`: Delay between NVD requests (default: 6.0 without key, 0.6 with key)
 - `MAX_DISCORD_EMBEDS_PER_MESSAGE`: Maximum embeds per message (default: 10)
@@ -78,7 +81,7 @@ python -m src.main
 Configure these in your repository settings (Settings → Secrets and variables → Actions):
 
 - `DISCORD_WEBHOOK_URL`: Your Discord webhook URL (required)
-- `NVD_API_KEY`: Your NVD API key (optional but recommended)
+- `NVD_API_KEY`: Your free NVD API key (strongly recommended - 10x faster)
 
 ### Workflow Configuration
 
@@ -186,11 +189,18 @@ Each vulnerability is displayed as a rich embed containing:
 - 🟢 Gold: Low (CVSS < 4.0)
 - 🔵 Blue: Informational/Testing
 
-## Rate Limits
+## Rate Limits and Retry Logic
 
 ### NVD API
 - **Without API Key**: 5 requests per 30 seconds (bot uses 6-second delay)
-- **With API Key**: 50 requests per 30 seconds (bot uses 0.6-second delay)
+- **With Free API Key**: 50 requests per 30 seconds (bot uses 0.6-second delay) - **10x faster!**
+
+### Exponential Backoff Retry
+The bot automatically retries failed requests with exponential backoff:
+- **Rate Limiting (429)**: Backs off exponentially (6s, 12s, 24s) up to 3 retries
+- **Server Errors (500-504)**: Retries with 2s, 4s, 8s delays
+- **Timeouts**: Retries with progressive delays
+- Graceful degradation: Continues with remaining CVEs if one fails
 
 ### Discord Webhooks
 - Rate limits vary but are generally permissive

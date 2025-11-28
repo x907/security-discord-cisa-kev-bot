@@ -46,10 +46,11 @@ class NVDEnricher:
         # Add API key if available
         if self.settings.nvd_api_key:
             headers["apiKey"] = self.settings.nvd_api_key
-            logger.info("NVD API key configured - using enhanced rate limits")
+            logger.info("NVD API key configured - using enhanced rate limits (50 req/30s)")
         else:
             logger.warning(
-                "NVD API key not configured - using public rate limits (slower)"
+                "NVD API key not configured - using public rate limits (5 req/30s). "
+                "Get a free API key at https://nvd.nist.gov/developers/request-an-api-key"
             )
 
         self.session.headers.update(headers)
@@ -83,11 +84,12 @@ class NVDEnricher:
             vector_string=cvss_data.get("vectorString"),
         )
 
-    def enrich_cve(self, cve_id: str) -> NVDCVEData | None:
-        """Enrich CVE data from NVD API.
+    def enrich_cve(self, cve_id: str, max_retries: int = 3) -> NVDCVEData | None:
+        """Enrich CVE data from NVD API with exponential backoff retry logic.
 
         Args:
             cve_id: CVE identifier (e.g., 'CVE-2024-1234')
+            max_retries: Maximum number of retry attempts for transient failures
 
         Returns:
             Enriched CVE data or None if not found/error
@@ -95,30 +97,80 @@ class NVDEnricher:
         Raises:
             NVDAPIError: If API request fails critically
         """
-        # Rate limit before making request
-        self._rate_limit()
+        url = f"{self.settings.nvd_base_url}"
+        params = {"cveId": cve_id}
 
+        for attempt in range(max_retries + 1):
+            # Rate limit before making request
+            self._rate_limit()
+
+            try:
+                logger.info(f"Fetching NVD data for {cve_id} (attempt {attempt + 1}/{max_retries + 1})")
+                response = self.session.get(
+                    url,
+                    params=params,
+                    timeout=self.settings.request_timeout_seconds,
+                )
+
+                # Handle different status codes
+                if response.status_code == 404:
+                    logger.warning(f"CVE {cve_id} not found in NVD")
+                    return None
+
+                if response.status_code == 403:
+                    logger.error(f"NVD API access forbidden for {cve_id} - check API key")
+                    return None
+
+                # Handle rate limiting with exponential backoff
+                if response.status_code == 429:
+                    if attempt < max_retries:
+                        backoff_time = (2 ** attempt) * self.settings.nvd_request_delay_seconds
+                        logger.warning(
+                            f"Rate limited by NVD for {cve_id}. "
+                            f"Backing off for {backoff_time:.1f}s before retry {attempt + 2}/{max_retries + 1}"
+                        )
+                        time.sleep(backoff_time)
+                        continue
+                    else:
+                        logger.error(f"Rate limit exceeded for {cve_id} after {max_retries} retries")
+                        return None
+
+                # Handle transient server errors with exponential backoff
+                if response.status_code in (500, 502, 503, 504):
+                    if attempt < max_retries:
+                        backoff_time = (2 ** attempt) * 2  # 2s, 4s, 8s
+                        logger.warning(
+                            f"Server error {response.status_code} for {cve_id}. "
+                            f"Retrying in {backoff_time}s (attempt {attempt + 2}/{max_retries + 1})"
+                        )
+                        time.sleep(backoff_time)
+                        continue
+                    else:
+                        logger.error(f"Server error for {cve_id} after {max_retries} retries")
+                        return None
+
+                response.raise_for_status()
+                break  # Success - exit retry loop
+
+            except requests.Timeout:
+                if attempt < max_retries:
+                    backoff_time = (2 ** attempt) * 2
+                    logger.warning(
+                        f"Timeout for {cve_id}. Retrying in {backoff_time}s "
+                        f"(attempt {attempt + 2}/{max_retries + 1})"
+                    )
+                    time.sleep(backoff_time)
+                    continue
+                else:
+                    logger.error(f"Timeout for {cve_id} after {max_retries} retries")
+                    return None
+
+            except requests.RequestException as e:
+                logger.error(f"Request failed for {cve_id}: {e}")
+                return None
+
+        # Parse the successful response
         try:
-            url = f"{self.settings.nvd_base_url}"
-            params = {"cveId": cve_id}
-
-            logger.info(f"Fetching NVD data for {cve_id}")
-            response = self.session.get(
-                url,
-                params=params,
-                timeout=self.settings.request_timeout_seconds,
-            )
-
-            # Handle rate limiting from NVD
-            if response.status_code == 403:
-                logger.error(f"NVD API access forbidden for {cve_id} - check API key")
-                return None
-
-            if response.status_code == 404:
-                logger.warning(f"CVE {cve_id} not found in NVD")
-                return None
-
-            response.raise_for_status()
 
             data: dict[str, Any] = response.json()
 
@@ -183,10 +235,6 @@ class NVDEnricher:
             logger.info(f"Successfully enriched {cve_id}")
             return nvd_data
 
-        except requests.RequestException as e:
-            logger.error(f"Failed to fetch NVD data for {cve_id}: {e}")
-            # Don't raise - return None to allow partial success
-            return None
         except (ValueError, KeyError, ValidationError) as e:
             logger.error(f"Failed to parse NVD data for {cve_id}: {e}")
             return None

@@ -88,8 +88,10 @@ The application follows a modular, security-first architecture with clear separa
    - Filters entries by date (default: last 24 hours)
    - Handles timezone-aware datetime comparisons
 
-4. **src/nvd_enricher.py**: NVD API integration with rate limiting
-   - Respects NVD rate limits: 5 req/30s (public) or 50 req/30s (with API key)
+4. **src/nvd_enricher.py**: NVD API integration with rate limiting and retry logic
+   - Respects NVD rate limits: 5 req/30s (public) or 50 req/30s (with free API key)
+   - **Exponential backoff retry**: Automatically retries on 429, 500-504, and timeouts
+   - Retry strategy: Up to 3 attempts with exponential backoff (2s, 4s, 8s for errors)
    - Parses CVSS v3.1, v3.0, and v2.0 metrics
    - Extracts CWE classifications and references
    - Graceful degradation: returns None on errors, doesn't crash
@@ -156,7 +158,10 @@ The `Settings` class in `src/config.py` enforces security constraints:
 Set in: Settings → Secrets and variables → Actions
 
 - `DISCORD_WEBHOOK_URL` (required): Discord webhook URL
-- `NVD_API_KEY` (optional): NVD API key for higher rate limits
+- `NVD_API_KEY` (strongly recommended): Free NVD API key for 10x faster rate limits
+  - Get free API key at: https://nvd.nist.gov/developers/request-an-api-key
+  - Without key: 5 requests/30s (slow, may timeout on large batches)
+  - With key: 50 requests/30s (10x faster)
 
 ## Important Notes for Development
 
