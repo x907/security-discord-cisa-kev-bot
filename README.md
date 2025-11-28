@@ -92,15 +92,19 @@ Configure these in your repository settings (Settings → Secrets and variables 
 ### Workflow Configuration
 
 The bot runs automatically on GitHub Actions:
-- **Schedule**: Every hour (configurable in `.github/workflows/kev-monitor.yml`)
+- **Schedule**: Every hour, checks last 24 hours (deduplication prevents duplicates)
 - **Manual**: Can be triggered manually with custom time windows
 - **On Push**: Runs on code changes for testing
+- **State Persistence**: Automatically commits state file back to repo after each run
 
 To modify the schedule, edit the cron expression in `.github/workflows/kev-monitor.yml`:
 ```yaml
 schedule:
-  - cron: '0 * * * *'  # Every hour
+  - cron: '0 * * * *'  # Every hour (free for public repos!)
+  - cron: '0 9 * * *'  # Daily at 9 AM UTC (alternative)
 ```
+
+**Note**: State file (`state/posted_cves.json`) is committed by the workflow to track posted CVEs across runs.
 
 ## Development
 
@@ -177,8 +181,17 @@ The bot automatically tracks which CVEs have been posted to prevent duplicates:
 - **Automatic Filtering**: Skips CVEs that were already posted
 - **State Cleanup**: Automatically removes entries older than 90 days to prevent unbounded growth
 - **Force Mode**: Use `--force` flag to bypass deduplication when needed
+- **GitHub Actions Persistence**: State file is automatically committed back to the repo after each run
 
-The state file is excluded from git (in `.gitignore`) and persists across runs.
+### Why Check 24 Hours When Running Hourly?
+
+The bot runs **every hour** but checks the **last 24 hours**. This is intentional:
+
+- ✅ **Safety Buffer**: If a run fails (network issue, GitHub downtime), we don't miss CVEs
+- ✅ **No Duplicates**: Deduplication prevents reposting
+- ✅ **Reliability**: Ensures we catch everything even with occasional failures
+
+The state file in the repository prevents duplicates across all runs.
 
 ## Security Considerations
 

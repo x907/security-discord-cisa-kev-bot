@@ -46,8 +46,7 @@ htmlcov/
 # Logs
 *.log
 
-# State files
-state/
+# State backup files (state/ dir is committed for GitHub Actions)
 *.json.bak
 
 # OS
