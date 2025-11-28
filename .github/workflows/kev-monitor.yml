@@ -1,0 +1,62 @@
+name: CISA KEV Monitor
+
+on:
+  # Run every hour
+  schedule:
+    - cron: '0 * * * *'
+
+  # Allow manual trigger
+  workflow_dispatch:
+    inputs:
+      check_hours:
+        description: 'Hours to look back for new vulnerabilities'
+        required: false
+        default: '24'
+        type: string
+
+  # Run on push to main (for testing)
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/**'
+      - '.github/workflows/kev-monitor.yml'
+      - 'requirements.txt'
+
+permissions:
+  contents: read
+
+jobs:
+  monitor:
+    name: Monitor CISA KEV Catalog
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run KEV monitor
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+          KEV_CHECK_HOURS: ${{ inputs.check_hours || '24' }}
+        run: |
+          python -m src.main
+
+      - name: Check for errors
+        if: failure()
+        run: |
+          echo "KEV monitoring failed. Check logs above for details."
+          exit 1
